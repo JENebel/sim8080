@@ -1,11 +1,8 @@
 use super::*;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Instruction {
+pub enum Opcode {
     NOP,
-    /// Load 16 bits immediate
-    /// 
-    /// B <- byte 3, C <- byte 2
     LXI(Register),
     STAX(Register),
     INX(Register),
@@ -85,10 +82,11 @@ pub enum Instruction {
     CPI,
 }
 
-impl From<u8> for Instruction {
+impl From<u8> for Opcode {
     fn from(value: u8) -> Self {
-        use Instruction::*;
+        use Opcode::*;
         use Register::*;
+
         match value {
             0x00 => NOP,
             0x01 => LXI(B),
@@ -350,10 +348,10 @@ impl From<u8> for Instruction {
     }
 }
 
-impl Into<u8> for Instruction {
+impl Into<u8> for Opcode {
     fn into(self) -> u8 {
         use Register::*;
-        use Instruction::*;
+        use Opcode::*;
 
         match self {
             NOP => 0x00,
@@ -605,9 +603,9 @@ impl Into<u8> for Instruction {
     }
 }
 
-/*impl Instruction {
+impl Opcode {
     pub fn size(&self) -> u8 {
-        use Instruction::*;
+        use Opcode::*;
         match self {
             LXI(_) => 3,
             MVI(_) => 2,
@@ -644,4 +642,4 @@ impl Into<u8> for Instruction {
             _ => 1,
         }
     }
-}*/
+}

@@ -1,12 +1,15 @@
-use sim8080::{Instruction, Register};
+use sim8080::{Opcode, Register};
 
-use Instruction::*;
+use Opcode::*;
 use Register::*;
 
 fn main() {
     let prog: Vec<u8> = vec![
-        MVI(E).into(), 5,  // E = 5
-        MOV(E, A).into(),  // E = A
+        MVI(H).into(), 0, 
+        MVI(L).into(), 60,
+        MVI(M).into(), 5,
+        LDA.into(), 60, 0,
+        ADI.into(), 7,
         OUT.into(),
         HLT.into(),
     ];

@@ -1,6 +1,6 @@
 use core::panic;
 
-use crate::Instruction;
+use crate::Opcode;
 
 /// Representation of the 8080 processor
 pub struct Emulator {
@@ -28,6 +28,48 @@ pub enum Register {
     SP = 8,
     /// HL register pair
     M = 255
+}
+
+impl Register {
+    pub fn is_pair(&self) -> bool {
+        use Register::*;
+        match self {
+            B | D | H => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_reg(&self) -> bool {
+        use Register::*;
+        match self {
+            A | B | C | D | E | H | L => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_reg_or_mem(&self) -> bool {
+        use Register::*;
+        match self {
+            A | B | C | D | E | H | L | M => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_spw_or_reg(&self) -> bool {
+        use Register::*;
+        match self {
+            SP | M => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_pair_or_sp(&self) -> bool {
+        use Register::*;
+        match self {
+            B | D | H | SP => true,
+            _ => false,
+        }
+    }
 }
 
 impl From<u8> for Register {
@@ -66,9 +108,9 @@ impl Emulator {
     }
 
     pub fn run(&mut self) {
-        while (self.pc as usize) < self.memory.len() {
-            let instruction = Instruction::from(self.fetch_byte());
-            if instruction == Instruction::HLT {
+        while (self.pc as usize) <= self.memory.len() {
+            let instruction = Opcode::from(self.fetch_byte());
+            if instruction == Opcode::HLT {
                 break;
             }
             self.execute_instruction(instruction);
@@ -80,7 +122,7 @@ impl Emulator {
     /// Fetches the next byte from memory and increments the program counter
     fn fetch_byte(&mut self) -> u8 {
         let value = self.memory[self.pc as usize];
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         value
     }
 
@@ -96,8 +138,7 @@ impl Emulator {
     fn write_loc(&mut self, reg: Register, value: u8) {
         match reg {
             Register::M => {
-                let (hi, lo) = self.get_reg_pair(Register::M);
-                let addr = ((self.read_loc(hi) as u16) << 8) | (self.read_loc(lo) as u16);
+                let addr = ((self.read_loc(Register::H) as u16) << 8) | (self.read_loc(Register::L) as u16);
                 self.memory[addr as usize] = value;
             }
             _ => self.registers[reg as usize] = value
@@ -109,10 +150,9 @@ impl Emulator {
     fn read_loc(&self, reg: Register) -> u8 {
         match reg {
             Register::M => {
-                let (hi, lo) = self.get_reg_pair(Register::M);
-                let addr = ((self.read_loc(hi) as u16) << 8) | (self.read_loc(lo) as u16);
+                let addr = ((self.read_loc(Register::H) as u16) << 8) | (self.read_loc(Register::L) as u16);
                 self.memory[addr as usize]
-            }
+            },
             _ => self.registers[reg as usize]
         }
     }
@@ -149,21 +189,21 @@ impl Emulator {
     }
 
     fn call_subroutine(&mut self, addr: u16) {
-        self.memory[(self.sp - 1) as usize] = (self.pc >> 8) as u8;
-        self.memory[(self.sp - 2) as usize] = self.pc as u8;
-        self.sp -= 2;
+        self.memory[(self.sp.wrapping_sub(1)) as usize] = (self.pc >> 8) as u8;
+        self.memory[(self.sp.wrapping_sub(2)) as usize] = self.pc as u8;
+        self.sp = self.sp.wrapping_sub(2);
         self.pc = addr;
     }
 
     fn return_from_subroutine(&mut self) {
         let pcl = self.memory[self.sp as usize];
-        let pch = self.memory[(self.sp + 1) as usize];
+        let pch = self.memory[(self.sp.wrapping_add(1)) as usize];
         self.pc = ((pch as u16) << 8) | (pcl as u16);
         self.sp += 2;
     }
 
-    fn execute_instruction(&mut self, instruction: Instruction) {
-        use Instruction::*;
+    fn execute_instruction(&mut self, instruction: Opcode) {
+        use Opcode::*;
         use Register::*;
         use Flag::*;
 
@@ -172,16 +212,13 @@ impl Emulator {
             LXI(reg) => {
                 let byte2 = self.fetch_byte();
                 let byte3 = self.fetch_byte();
-                match reg {
-                    SP => {
-                        self.sp = ((byte3 as u16) << 8) | (byte2 as u16);
-                    },
-                    reg => {
-                        let (hi, lo) = self.get_reg_pair(reg);
-                        self.write_loc(hi, byte3);
-                        self.write_loc(lo, byte2);
-                    }
+                if reg == SP {
+                    self.sp = ((byte3 as u16) << 8) | (byte2 as u16);
+                    return
                 }
+                let (hi, lo) = self.get_reg_pair(reg);
+                self.write_loc(hi, byte3);
+                self.write_loc(lo, byte2);
             },
             STAX(reg) => {
                 let (hi, lo) = self.get_reg_pair(reg);
@@ -189,6 +226,10 @@ impl Emulator {
                 self.memory[addr as usize] = self.read_loc(A);
             },
             INX(reg) => {
+                if reg == SP {
+                    self.sp = self.sp.wrapping_add(1);
+                    return;
+                }
                 let (hi, lo) = self.get_reg_pair(reg);
                 let value = ((self.read_loc(hi) as u16) << 8) | (self.read_loc(lo) as u16);
                 let value = value.wrapping_add(1);
@@ -219,10 +260,15 @@ impl Emulator {
             },
             DAD(reg) => {
                 let (hi, lo) = self.get_reg_pair(reg);
-                let value = ((self.read_loc(hi) as u16) << 8) | (self.read_loc(lo) as u16);
-                let (result, carry) = value.overflowing_add(self.sp);
-                self.write_loc(hi, (result >> 8) as u8);
-                self.write_loc(lo, result as u8);
+                let value = if reg == SP {
+                    self.sp
+                } else {
+                    ((self.read_loc(hi) as u16) << 8) | (self.read_loc(lo) as u16)
+                };
+                let hl = ((self.read_loc(H) as u16) << 8) | (self.read_loc(L) as u16);
+                let (result, carry) = value.overflowing_add(hl);
+                self.write_loc(H, (result >> 8) as u8);
+                self.write_loc(L, result as u8);
                 self.set_flag(Carry, carry);
             },
             LDAX(reg) => {
@@ -268,7 +314,7 @@ impl Emulator {
                 let byte3 = self.fetch_byte();
                 let addr = ((byte3 as u16) << 8) | (byte2 as u16);
                 self.memory[addr as usize] = self.read_loc(L);
-                self.memory[(addr + 1) as usize] = self.read_loc(H);
+                self.memory[(addr.wrapping_add(1)) as usize] = self.read_loc(H);
             },
             DAA => {
                 let mut value = self.read_loc(A);
@@ -290,7 +336,7 @@ impl Emulator {
                 let byte3 = self.fetch_byte();
                 let addr = ((byte3 as u16) << 8) | (byte2 as u16);
                 self.write_loc(L, self.memory[addr as usize]);
-                self.write_loc(H, self.memory[(addr + 1) as usize]);
+                self.write_loc(H, self.memory[(addr.wrapping_add(1)) as usize]);
             },
             CMA => {
                 let value = self.read_loc(A);
@@ -338,9 +384,9 @@ impl Emulator {
                 self.set_flag(AuxCarry, (a_val & 0b0000_1111) + (value & 0b0000_1111) + (self.get_flag(Carry) as u8) > 0x0f);
                 self.update_flags_with(result);
             },
-            SUB(a) => {
+            SUB(reg) => {
                 let a_val = self.read_loc(A);
-                let value = self.read_loc(a);
+                let value = self.read_loc(reg);
                 let (result, carry) = a_val.overflowing_sub(value);
                 self.write_loc(A, result);
                 self.set_flag(Carry, carry);
@@ -398,15 +444,15 @@ impl Emulator {
                 match reg {
                     PSW => {
                         self.write_loc(PSW, self.memory[self.sp as usize] & 0b11010101);
-                        self.write_loc(A, self.memory[(self.sp + 1) as usize]);
+                        self.write_loc(A, self.memory[(self.sp.wrapping_add(1)) as usize]);
                     },
                     reg => {
                         let (rh, rl) = self.get_reg_pair(reg);
                         self.write_loc(rl, self.memory[self.sp as usize]);
-                        self.write_loc(rh, self.memory[(self.sp + 1) as usize]);
+                        self.write_loc(rh, self.memory[(self.sp.wrapping_add(1)) as usize]);
                     }
                 };
-                self.sp += 2;
+                self.sp = self.sp.wrapping_add(2);
             }
             JNZ => {
                 if self.get_flag(Zero) { return };
@@ -431,16 +477,16 @@ impl Emulator {
             PUSH(reg) => {
                 match reg {
                     PSW => {
-                        self.memory[(self.sp - 1) as usize] = self.read_loc(A);
-                        self.memory[self.sp as usize] = self.read_loc(PSW) & 0b11010111;
+                        self.memory[(self.sp.wrapping_sub(1)) as usize] = self.read_loc(A);
+                        self.memory[(self.sp.wrapping_sub(2)) as usize] = self.read_loc(PSW) & 0b11010111;
                     },
                     reg => {
                         let (rh, rl) = self.get_reg_pair(reg);
-                        self.memory[(self.sp - 1) as usize] = self.read_loc(rh);
-                        self.memory[(self.sp - 2) as usize] = self.read_loc(rl);
+                        self.memory[(self.sp.wrapping_sub(1)) as usize] = self.read_loc(rh);
+                        self.memory[(self.sp.wrapping_sub(2)) as usize] = self.read_loc(rl);
                     }
                 };
-                self.sp -= 2;
+                self.sp = self.sp.wrapping_sub(2);
             },
             ADI => {
                 let byte2 = self.fetch_byte();
@@ -452,6 +498,7 @@ impl Emulator {
                 self.update_flags_with(result);
             },
             RST(n) => {
+                assert!(n < 8);
                 self.call_subroutine(n as u16 * 8);
             },
             RZ => {
@@ -505,6 +552,7 @@ impl Emulator {
             },
             OUT => {
                 // TODO
+                let _ = self.fetch_byte();
                 println!("{}", self.read_loc(A));
                 // print!("{}", self.read_loc(A) as char);
             },
