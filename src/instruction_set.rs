@@ -1,5 +1,21 @@
 use super::*;
 
+pub const OPCODES: [&'static str; 78] = [
+    "NOP", "LXI",  "STAX", "INX",  "INR",  "DCR",
+    "MVI", "RLC",  "DAD",  "LDAX", "DCX",  "RRC",
+    "RAL", "RAR",  "SHLD", "DAA",  "LHLD", "CMA",
+    "STA", "STC",  "LDA",  "CMC",  "MOV",  "HLT",
+    "ADD", "ADC",  "SUB",  "SBB",  "ANA",  "XRA",
+    "ORA", "CMP",  "RNZ",  "POP",  "JNZ",  "JMP",
+    "CNZ", "PUSH", "ADI",  "RST",  "RZ",   "RET",
+    "JZ",  "CZ",   "CALL", "ACI",  "RNC",  "JNC",
+    "OUT", "CNC",  "SUI",  "RC",   "JC",   "IN",
+    "CC",  "SBI",  "RPO",  "JPO",  "XTHL", "CPO",
+    "ANI", "RPE",  "PCHL", "JPE",  "XCHG", "CPE",
+    "XRI", "RP",   "JP",   "DI",   "CP",   "ORI",
+    "RM",  "SPHL", "JM",   "EI",   "CM",   "CPI",
+];
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Opcode {
     NOP,
