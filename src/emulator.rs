@@ -102,9 +102,13 @@ impl Emulator {
     }
 
     /// Loads a program into memory. Overwrites any existing memory.
-    pub fn load(&mut self, program: &[u8]) {
+    pub fn load(&mut self, program: Vec<(u16, Vec<u8>)>) {
         self.memory = [0; 0x10000];
-        self.memory[..program.len()].copy_from_slice(program);
+        for (addr, bytes) in program {
+            for (i, byte) in bytes.iter().enumerate() {
+                self.memory[(addr as usize) + i] = *byte;
+            }
+        }
     }
 
     pub fn run(&mut self) {
@@ -116,7 +120,7 @@ impl Emulator {
             self.execute_instruction(instruction);
             // Insert delay to match targeted cycle time (usually 2MHz)
         }
-        println!("Program finished")
+        println!("\nProgram finished")
     }
 
     /// Fetches the next byte from memory and increments the program counter
