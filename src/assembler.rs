@@ -72,6 +72,7 @@ pub fn assemble(lines: Vec<String>) -> Result<(Vec<(u16, Vec<u8>)>, Vec<Assemble
     let (mut asm, labels) = preprocess(lines, &mut warnings)?;
     let labels = measure(&mut asm, labels)?;
 
+    let binary = generate_binary(&mut asm, labels.clone())?;
     
     println!("----- Assembled program -----");
     for line in asm.clone() {
@@ -82,9 +83,6 @@ pub fn assemble(lines: Vec<String>) -> Result<(Vec<(u16, Vec<u8>)>, Vec<Assemble
     }
     println!("\n----- Labels ----------------");
     println!("Labels: {:?}", labels);
-
-    let binary = generate_binary(&mut asm, labels)?;
-
 
     println!("\n----- Binary ----------------");
     for (addr, bytes) in binary.clone() {
@@ -503,7 +501,7 @@ fn parse_register(reg: &str, var_env: &HashMap<String, u16>, line_nr: usize) -> 
         6 => Ok(Register::M),
         7 => Ok(Register::A),
         _ => Err(AssemblerError {
-            line_nr: 0,
+            line_nr,
             message: format!("Illegal register: {}", reg),
         }),
     }

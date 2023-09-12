@@ -1,5 +1,6 @@
-use std::{env, fs::File, io::{self, BufRead, Write}};
+use std::{env, fs::File, io::{self, BufRead, Write}, path::Path};
 
+use itertools::Itertools;
 use sim8080::{assemble, Emulator};
 
 fn main() {
@@ -44,9 +45,26 @@ fn main() {
         },
         "run" => {
             let file_name = &args[2];
-            let program = match assemble_file(file_name) {
-                Ok(p) => p,
-                Err(_) => return,
+            let extension = Path::new(file_name).extension();
+            let program = match extension.map(|s| s.to_str().unwrap()) {
+                Some("asm") => match assemble_file(file_name) {
+                    Ok(p) => p,
+                    Err(_) => return,
+                },
+                Some("hex") => {
+                    match load_hex(file_name.to_string()) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            println!("Failed to load hex file: {}", e);
+                            return
+                        },
+                    }
+                }
+                Some(_) => {
+                    println!("Unsupported file type");
+                    return
+                },
+                None => todo!(), // Binary
             };
 
             let mut cpu = Emulator::new();
@@ -85,6 +103,35 @@ fn gen_hex(program: Vec<(u16, Vec<u8>)>) -> String {
     hex.push_str(":00000001FF");
     
     hex
+}
+
+fn load_hex(filename: String) -> Result<Vec<(u16, Vec<u8>)>, String> {
+    let file = File::open(filename).expect("Failed to open file");
+    let lines = io::BufReader::new(file).lines().map(|l| l.unwrap()).collect::<Vec<String>>();
+
+    let mut res = Vec::new();
+
+    for line in lines {
+        let (_, line) = line.split_once(':').unwrap();
+        if line == "00000001FF" {
+            break;
+        }
+        let mut bytes = line.chars().chunks(2).into_iter()
+            .map(|c| u8::from_str_radix(&c.collect::<String>(), 16).unwrap())
+            .collect::<Vec<u8>>();
+        
+        let byte_count = bytes.remove(0);
+        let address = ((bytes.remove(0) as u16) << 8) | bytes.remove(0) as u16;
+        let record_type = bytes.remove(0);
+        let checksum = bytes.pop().unwrap();
+        let data = bytes;
+        let sum = data.iter().map(|b| *b as u32).sum::<u32>() + address as u32 + record_type as u32 + byte_count as u32 + checksum as u32;
+        assert!(sum as u8 == 0);
+
+        res.push((address, data));
+    }
+
+    Ok(res)
 }
 
 fn assemble_file(filename: &str) -> Result<Vec<(u16, Vec<u8>)>, ()> {
