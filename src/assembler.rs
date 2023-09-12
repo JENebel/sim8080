@@ -136,7 +136,15 @@ fn preprocess(lines: Vec<String>, warnings: &mut Vec<AssemblerWarning>) -> Resul
 
     for (line_nr, line) in lines.iter().enumerate() {
         // Remove comments
-        let line = line.split(';').next().unwrap().trim().to_uppercase();
+        let line = line.split(';').next().unwrap().trim();
+
+        // Convert to uppercase except for strings. Kind of ugly, but oh well
+        let line = {
+            match line.split_once('\'') {
+                Some((inst, string)) => format!("{}'{}", inst.to_ascii_uppercase(), string),
+                None => line.to_ascii_uppercase(),
+            }
+        };
 
         // Seperate label from instruction
         let instruction = match line.find(':') {
@@ -302,6 +310,53 @@ fn measure<'a>(lines: &'a mut Vec<Asm>, labels: Vec<(String, usize)>) -> Result<
                         inst.args[0] = location.to_string();
                     }
                     "DB" => {
+                        if inst.args.len() < 1 {
+                            return Err(AssemblerError {
+                                line_nr: inst.line,
+                                message: format!("Expected at least 1 argument, found none"),
+                            });
+                        }
+                        if inst.args[0].starts_with("'") {
+                            if !inst.args[0].ends_with("'") {
+                                return Err(AssemblerError {
+                                    line_nr: inst.line,
+                                    message: format!("Unclosed string literal"),
+                                });
+                            }
+                            if inst.args[0].len() == 2 {
+                                return Err(AssemblerError {
+                                    line_nr: inst.line,
+                                    message: format!("Empty string literal"),
+                                });
+                            }
+                            let mut chars: Vec<String> = Vec::new();
+                            let mut i = 1;
+                            while i < inst.args[0].len() - 1 {
+                                // Handle escape sequences and store as hex
+                                if inst.args[0].chars().nth(i).unwrap() == '\\' {
+                                    let next = inst.args[0].chars().nth(i + 1).unwrap();
+                                    let escaped = match next {
+                                        'n' => '\n',
+                                        'r' => '\r',
+                                        't' => '\t',
+                                        '\\' => '\\',
+                                        '\'' => '\'',
+                                        '\"' => '\"',
+                                        _ => return Err(AssemblerError {
+                                            line_nr: inst.line,
+                                            message: format!("Unknown escape sequence: '\\{}'", next),
+                                        })
+                                    };
+                                    chars.push(format!("{:02X}H", escaped as u8));
+                                    i += 2;
+                                } else {
+                                    chars.push(format!("{:02X}H", inst.args[0].chars().nth(i).unwrap() as u8));
+                                    i += 1;
+                                }
+                            }
+                            inst.args = chars;
+                        }
+
                         let length = inst.args.len() as u16;
                         location += length;
                         inst.length = length;
@@ -440,13 +495,13 @@ enum Token {
 fn parse_lit(arg: &str, line_nr: usize) -> Result<(u16, Option<&str>), AssemblerError> {
     let index = arg.find(|c: char|
         !c.is_ascii_hexdigit()
-        && c != 'H' && c != 'O' && c != 'B' && c != 'D'
+        && c != 'H' && c != 'O' && c != 'B' && c != 'D' && c != 'Q'
     ).unwrap_or(arg.len());
 
     let mut literal = &arg[..index];
 
     let base = match literal.chars().last().unwrap() {
-        'O' => {
+        'O' | 'Q' => {
             literal = &literal[..literal.len() - 1];
             8
         },

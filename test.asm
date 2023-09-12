@@ -20,7 +20,7 @@ quit:   hlt
         
 
         org     64
-data:   DB      'aber\''
+data:   DB      'AB\n'
 after:
 
 

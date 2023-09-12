@@ -557,8 +557,7 @@ impl Emulator {
             OUT => {
                 // TODO
                 let _ = self.fetch_byte();
-                println!("{}", self.read_loc(A) as char);
-                // print!("{}", self.read_loc(A) as char);
+                print!("{}", self.read_loc(A) as char);
             },
             CNC => {
                 if self.get_flag(Carry) { return }
