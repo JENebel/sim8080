@@ -1,4 +1,5 @@
-use std::{env, fs::File, io::{self, BufRead, Write}, path::Path};
+use core::panic;
+use std::{env, fs::File, io::{self, BufRead, Write, Read}, path::Path};
 
 use itertools::Itertools;
 use sim8080::{assemble, Emulator};
@@ -9,6 +10,7 @@ fn main() {
     match command.as_str() {
         "assemble" | "asmbl" => {
             let file_name = &args[2];
+            let name = Path::new(file_name).file_stem().unwrap().to_str().unwrap().to_string();
 
             match args.get(3).map(|s| s.as_str()) {
                 Some("-check") => {
@@ -22,10 +24,9 @@ fn main() {
                         Ok(p) => p,
                         Err(_) => return,
                     };
-                    let mut file = File::create(
-                        &args.get(4).expect("Expected a filename")
-                    ).expect("Failed to create file");
-                    file.write_all(gen_hex(program).as_bytes()).expect("Failed to write to file");
+                    
+                    write_hex(&args.get(4).unwrap().to_string(), &program);
+                    write_com(&args.get(4).unwrap().to_string(), &program);
                 },
                 Some(_) => {
                     println!("Unknown flag: {}", args.get(3).unwrap());
@@ -35,11 +36,8 @@ fn main() {
                         Ok(p) => p,
                         Err(_) => return,
                     };
-                    // Save as inputname.out
-                    let mut file = File::create(
-                        &args.get(2).unwrap().replace(".asm", ".hex")
-                    ).expect("Failed to create file");
-                    file.write_all(gen_hex(program).as_bytes()).expect("Failed to write to file");
+                    write_hex(&name, &program);
+                    write_com(&name, &program);
                 },
             }
         },
@@ -52,14 +50,23 @@ fn main() {
                     Err(_) => return,
                 },
                 Some("hex") => {
-                    match load_hex(file_name.to_string()) {
+                    match load_hex(file_name.to_string(), false) {
                         Ok(p) => p,
                         Err(e) => {
                             println!("Failed to load hex file: {}", e);
                             return
                         },
                     }
-                }
+                },
+                Some("com") => {
+                    match load_com(file_name.to_string(), false) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            println!("Failed to load com file: {}", e);
+                            return
+                        },
+                    }
+                },
                 Some(_) => {
                     println!("Unsupported file type");
                     return
@@ -70,12 +77,33 @@ fn main() {
             let mut cpu = Emulator::new();
             cpu.load(program);
             cpu.run();
+        },
+        "dump" => {
+            let file_name = &args[2];
+            let extension = Path::new(file_name).extension();
+            match extension.unwrap().to_str().unwrap() {
+                "hex" => match load_hex(file_name.to_string(), true) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        println!("Failed to load hex file: {}", e);
+                        panic!()
+                    },
+                },
+                "com" => match load_com(file_name.to_string(), true) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        println!("Failed to load com file: {}", e);
+                        panic!()
+                    },
+                },
+                _ => panic!(),
+            }
         }
         _ => println!("Unknown command: {}", command),
     }
 }
 
-fn gen_hex(program: Vec<(u16, Vec<u8>)>) -> String {
+fn write_hex(filename: &String, program: &Vec<(u16, Vec<u8>)>) {
     let mut hex = String::new();
     for (addr, bytes) in program {
         // Write out with max 16 bytes per line
@@ -91,7 +119,7 @@ fn gen_hex(program: Vec<(u16, Vec<u8>)>) -> String {
                 hex.push_str(&format!("{:02X}", chunk[i]));
             }
             // Write checksum with 2 hex pairs
-            let sum: u32 = chunk.len() as u32 + addr as u32 + 0x00 + chunk.iter().map(|b| *b as u32).sum::<u32>();
+            let sum: u32 = chunk.len() as u32 + *addr as u32 + 0x00 + chunk.iter().map(|b| *b as u32).sum::<u32>();
             let checksum = (!(sum)) + 1;
             hex.push_str(&format!("{:02X}", checksum as u8));
 
@@ -100,12 +128,14 @@ fn gen_hex(program: Vec<(u16, Vec<u8>)>) -> String {
     }
 
     // Write end of file record
-    hex.push_str(":00000001FF");
+    hex.push_str(":00000001FF\n");
     
-    hex
+    // Write to file
+    let mut file = File::create(format!("{filename}.com")).expect("Failed to create file");
+    file.write_all(hex.as_bytes()).expect("Failed to write to file");
 }
 
-fn load_hex(filename: String) -> Result<Vec<(u16, Vec<u8>)>, String> {
+fn load_hex(filename: String, print: bool) -> Result<Vec<(u16, Vec<u8>)>, String> {
     let file = File::open(filename).expect("Failed to open file");
     let lines = io::BufReader::new(file).lines().map(|l| l.unwrap()).collect::<Vec<String>>();
 
@@ -128,10 +158,44 @@ fn load_hex(filename: String) -> Result<Vec<(u16, Vec<u8>)>, String> {
         let sum = data.iter().map(|b| *b as u32).sum::<u32>() + address as u32 + record_type as u32 + byte_count as u32 + checksum as u32;
         assert!(sum as u8 == 0);
 
+        if print {
+            println!("{}:\t{}", address, data.iter().map(|b| format!("{:02X}", b)).join(" "));
+        }
+
         res.push((address, data));
     }
 
     Ok(res)
+}
+
+fn write_com(filename: &String, program: &Vec<(u16, Vec<u8>)>) {
+    let mut file = File::create(format!("{filename}.com")).expect("Failed to create file");
+    let mut loc = 0;
+    for (addr, bytes) in program {
+        if *addr > loc {
+            file.write_all(&vec![0; (addr - loc) as usize]).expect("Failed to write to file");
+            loc = *addr;
+        }
+        
+        for byte in bytes {
+            file.write_all(&[*byte]).expect("Failed to write to file");
+            loc += bytes.len() as u16;
+        }
+    }
+}
+
+fn load_com(filename: String, print: bool) -> Result<Vec<(u16, Vec<u8>)>, String> {
+    let file = File::open(filename).expect("Failed to open file");
+    // Read raw bytes to array
+    let mut reader = io::BufReader::new(file);
+    let mut bytes = Vec::new();
+    let _ = reader.read_to_end(&mut bytes).unwrap();
+
+    if print {
+        println!("{}", bytes.iter().map(|b| format!("{:02X}", b)).join(" "));
+    }
+
+    Ok(vec![(0, bytes)])
 }
 
 fn assemble_file(filename: &str) -> Result<Vec<(u16, Vec<u8>)>, ()> {

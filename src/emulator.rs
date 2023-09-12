@@ -97,7 +97,7 @@ impl Emulator {
             registers: [0; 8],
             memory: [0; 0x10000],
             pc: 0,
-            sp: 0,
+            sp: u16::MAX,
         }
     }
 
@@ -364,7 +364,7 @@ impl Emulator {
             CMC => {
                 self.set_flag(Carry, !self.get_flag(Carry))
             },
-            MOV(src, dst) => {
+            MOV(dst, src) => {
                 let value = self.read_loc(src);
                 self.write_loc(dst, value)
             },
@@ -557,7 +557,7 @@ impl Emulator {
             OUT => {
                 // TODO
                 let _ = self.fetch_byte();
-                println!("{}", self.read_loc(A));
+                println!("{}", self.read_loc(A) as char);
                 // print!("{}", self.read_loc(A) as char);
             },
             CNC => {
