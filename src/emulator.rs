@@ -120,7 +120,6 @@ impl Emulator {
             self.execute_instruction(instruction);
             // Insert delay to match targeted cycle time (usually 2MHz)
         }
-        println!("\nProgram finished")
     }
 
     /// Fetches the next byte from memory and increments the program counter

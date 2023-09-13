@@ -1,0 +1,5 @@
+[alias]
+ass80 = "run --release -- assemble"
+run80 = "run --release -- run"
+check80 = "run --release -- test"
+dump80 = "run --release -- dump"

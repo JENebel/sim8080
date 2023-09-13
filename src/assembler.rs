@@ -67,28 +67,30 @@ impl Display for Asm {
     }
 }
 
-pub fn assemble(lines: Vec<String>) -> Result<(Vec<(u16, Vec<u8>)>, Vec<AssemblerWarning>), AssemblerError> {
+pub fn assemble(lines: Vec<String>, print: bool) -> Result<(Vec<(u16, Vec<u8>)>, Vec<AssemblerWarning>), AssemblerError> {
     let mut warnings = Vec::new();
     let (mut asm, labels) = preprocess(lines, &mut warnings)?;
     let labels = measure(&mut asm, labels)?;
 
     let binary = generate_binary(&mut asm, labels.clone())?;
     
-    println!("----- Assembled program -----");
-    for line in asm.clone() {
-        if matches!(line, Asm::Empty(_)) {
-            continue;
+    if print {
+        println!("----- Assembled program -----");
+        for line in asm.clone() {
+            if matches!(line, Asm::Empty(_)) {
+                continue;
+            }
+            println!("{}", line);
         }
-        println!("{}", line);
-    }
-    println!("\n----- Labels ----------------");
-    println!("Labels: {:?}", labels);
+        println!("\n----- Labels ----------------");
+        println!("Labels: {:?}", labels);
 
-    println!("\n----- Binary ----------------");
-    for (addr, bytes) in binary.clone() {
-        println!("{:04X}:\t{}", addr, bytes.iter().map(|b| format!("{:02X}", b)).join(" "));
+        println!("\n----- Binary ----------------");
+        for (addr, bytes) in binary.clone() {
+            println!("{:04X}:\t{}", addr, bytes.iter().map(|b| format!("{:02X}", b)).join(" "));
+        }
+        println!("\n-----------------------------");
     }
-    println!("\n-----------------------------");
 
     Ok((binary, warnings))
 }
