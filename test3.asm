@@ -1,10 +1,14 @@
-BRIAN   SET     0
+BRIAN   SET     1
 
-    IF      BRIAN
+        IF      BRIAN
         DB      1
-        IF      1
-            DB      2
-        ENDIF
-    ENDIF
 
-    DB      5
+        IF      0
+        DB      2
+        ENDIF
+
+        ENDIF
+
+        DB      5
+
+FUCK:
