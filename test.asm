@@ -1,26 +1,29 @@
-        lxi     b, after - data
+len     set     after - data
+        lxi     b, len
         lxi     d, data
         lxi     h, after
 
-        call    memcpy
+        call    memcp
 
-        mvi     c, data
-        mvi     d, after
+        MVI     C, data + len
+        MVI     D, data + len * 2
 
-prnt:   ldax    b
-        out     0
-        inr     c
-        mov     a,c
-        cmp     d
-        jz      quit
-        jmp     prnt
+PRNT:   LDAX    B
+        OUT     A
+        INR     C
+        MOV     A,C
+        CMP     D
+        JNZ     PRNT
+        HLT
         
 quit:   hlt
 
-        
+
 
         org     64
-data:   DB      'AB\n'
+data:   
+        DB      -2+50
+        DB      '\n'
 after:
 
 

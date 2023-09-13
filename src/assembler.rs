@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::{Register, Opcode};
 
-const OPCODES: [&'static str; 83] = [
+const OPCODES: [&'static str; 85] = [
     "NOP", "LXI",  "STAX", "INX",  "INR",  "DCR",
     "MVI", "RLC",  "DAD",  "LDAX", "DCX",  "RRC",
     "RAL", "RAR",  "SHLD", "DAA",  "LHLD", "CMA",
@@ -20,7 +20,7 @@ const OPCODES: [&'static str; 83] = [
     "RM",  "SPHL", "JM",   "EI",   "CM",   "CPI",
 
     // Pseudo instructions
-    "ORG", "DB",   "DW",   "DS",   "END",
+    "ORG", "DB",   "DW",   "DS",   "END", "IF", "ENDIF"
 ];
 
 const NAMED_OPCODES: [&'static str; 2] = [
@@ -135,10 +135,18 @@ fn preprocess(lines: Vec<String>, warnings: &mut Vec<AssemblerWarning>) -> Resul
     
     let mut new_lines = Vec::new();
     let mut labels = Vec::new();
+    let mut end_found = false;
 
     for (line_nr, line) in lines.iter().enumerate() {
         // Remove comments
         let line = line.split(';').next().unwrap().trim();
+
+        if !line.is_empty() && end_found {
+            return Err(AssemblerError {
+                line_nr,
+                message: "Code after END".to_string(),
+            });
+        }
 
         // Convert to uppercase except for strings. Kind of ugly, but oh well
         let line = {
@@ -182,6 +190,9 @@ fn preprocess(lines: Vec<String>, warnings: &mut Vec<AssemblerWarning>) -> Resul
                 let mut split = instruction.split_whitespace();
 
                 let opcode = split.next().unwrap();
+                if opcode == "END" {
+                    end_found = true;
+                }
 
                 // Detect illegal named opcodes
                 if let Some(next) = split.clone().peekable().peek() {
@@ -250,12 +261,11 @@ fn preprocess(lines: Vec<String>, warnings: &mut Vec<AssemblerWarning>) -> Resul
         }
     }
 
-
     Ok((new_lines, labels))
 }
 
 /// Creates the initial variable environment with the registers
-fn initial_var_env() -> HashMap<String, u16> {
+fn initial_var_env() -> HashMap<String, Option<u16>> {
     let mut vars: HashMap<String, u16> = HashMap::new();
     vars.insert("B".to_string(), 0);
     vars.insert("C".to_string(), 1);
@@ -265,24 +275,51 @@ fn initial_var_env() -> HashMap<String, u16> {
     vars.insert("L".to_string(), 5);
     vars.insert("M".to_string(), 6);
     vars.insert("A".to_string(), 7);
-    vars
+    vars.into_iter().map(|(r, v)| (r, Some(v))).collect()
 }
 
 /// Calculates the address of everything, as well as determine variables and labels
-fn measure<'a>(lines: &'a mut Vec<Asm>, labels: Vec<(String, usize)>) -> Result<HashMap<String, u16>, AssemblerError> {
+fn measure<'a>(lines: &'a mut Vec<Asm>, labels: Vec<(String, usize)>) -> Result<HashMap<String, Option<u16>>, AssemblerError> {
     let mut vars = initial_var_env();
     let mut location: u16 = 0;
     let mut labels = labels.into_iter().peekable();
-    let mut new_labels: HashMap<String, u16> = HashMap::new();
+    let mut new_labels: HashMap<String, Option<u16>> = HashMap::new();
+    let mut if_depth = 0;
+    let mut skip_depth = 0;
+    let mut if_skipping = false;
 
     for (line_nr, line) in lines.iter_mut().enumerate() {
         if let Some((label, lbl_line_nr)) = labels.peek() {
             if line_nr >= *lbl_line_nr {
-                vars.insert(label.clone(), location);
-                new_labels.insert(label.clone(), location);
+                vars.insert(label.clone(), Some(location));
+                new_labels.insert(label.clone(), Some(location));
                 labels.next();
             }
         }
+
+        ////  IFs & ENDIFs  ////
+        if let Asm::Inst(inst) = line {
+            if inst.opcode == "ENDIF" {
+                if_depth -= 1;
+                if if_depth == skip_depth {
+                    if_skipping = false;
+                }
+                *line = Asm::Empty(location);
+            } else if inst.opcode == "IF" {
+                let value = eval_arg(&inst.args[0], inst.address, &vars, line_nr)?;
+                if value == 0 {
+                    skip_depth = if_depth;
+                    if_skipping = true;
+                }
+                if_depth += 1;
+                *line = Asm::Empty(location);
+            }
+        }
+        if if_skipping {
+            *line = Asm::Empty(location);
+            continue;
+        }
+        ////  IFs & ENDIFs over  ////
 
         match line {
             Asm::Empty(address) => { *address = location},
@@ -375,10 +412,13 @@ fn measure<'a>(lines: &'a mut Vec<Asm>, labels: Vec<(String, usize)>) -> Result<
                                 message: format!("Expected 1 arguments, found {}", inst.args.len()),
                             });
                         }
-                        let value = eval_arg(&inst.args[0], inst.address, &vars, line_nr)?;
-                        inst.args[0] = value.to_string();
-                        vars.insert(inst.name.clone(), value);
-                    }
+                        if let Ok(value) = eval_arg(&inst.args[0], inst.address, &vars, line_nr) {
+                            inst.args[0] = value.to_string();
+                            vars.insert(inst.name.clone(), Some(value));
+                        } else {
+                            vars.insert(inst.name.clone(), None);
+                        }
+                    },
                     "EQU" => {
                         if inst.args.len() != 1 {
                             return Err(AssemblerError {
@@ -392,10 +432,11 @@ fn measure<'a>(lines: &'a mut Vec<Asm>, labels: Vec<(String, usize)>) -> Result<
                                 message: format!("Variable '{}' already defined", inst.args[0]),
                             });
                         }
-                        let value = eval_arg(&inst.args[0], inst.address, &vars, line_nr)?;
-                        inst.args[0] = value.to_string();
-                        vars.insert(inst.name.clone(), value);
-                    }
+                        if let Ok(value) = eval_arg(&inst.args[0], inst.address, &vars, line_nr) {
+                            inst.args[0] = value.to_string();
+                            vars.insert(inst.name.clone(), Some(value));
+                        }
+                    },
                     "END" => break,
                     _=> {
                         let length = measure_opcode(&inst.opcode);
@@ -410,9 +451,9 @@ fn measure<'a>(lines: &'a mut Vec<Asm>, labels: Vec<(String, usize)>) -> Result<
     Ok(new_labels)
 }
 
-fn generate_binary(lines: &mut Vec<Asm>, labels: HashMap<String, u16>) -> Result<Vec<(u16, Vec<u8>)>, AssemblerError> {
+fn generate_binary(lines: &mut Vec<Asm>, labels: HashMap<String, Option<u16>>) -> Result<Vec<(u16, Vec<u8>)>, AssemblerError> {
     let mut var_env = initial_var_env();
-    var_env.extend(labels.clone());
+    var_env.extend(labels);
 
     let mut binary: Vec<(u16, Vec<u8>)> = Vec::new();
     let mut temp: Vec<u8> = Vec::new();
@@ -426,6 +467,7 @@ fn generate_binary(lines: &mut Vec<Asm>, labels: HashMap<String, u16>) -> Result
             Asm::Inst(inst) => {
                 let args = inst.args.clone();
                 match inst.opcode.as_str() {
+                    "IF" | "ENDIF" => (),
                     "ORG" => {
                         if !temp.is_empty() {
                             binary.push((temp_start_address, temp));
@@ -444,11 +486,11 @@ fn generate_binary(lines: &mut Vec<Asm>, labels: HashMap<String, u16>) -> Result
                     },
                     "SET" => {
                         let value = eval_arg(&args[0], inst.address, &var_env, line_nr)?;
-                        var_env.insert(inst.name.clone(), value);
+                        var_env.insert(inst.name.clone(), Some(value));
                     },
                     "EQU" => {
                         let value = eval_arg(&args[0], inst.address, &var_env, line_nr)?;
-                        var_env.insert(inst.name.clone(), value);
+                        var_env.insert(inst.name.clone(), Some(value));
                     },
                     "END" => break, 
                     opcode => {
@@ -534,7 +576,7 @@ fn parse_lit(arg: &str, line_nr: usize) -> Result<(u16, Option<&str>), Assembler
     Ok((lit, if rest.is_empty() { None } else { Some(rest) }))
 }
 
-fn parse_token<'a, 'b>(arg: &'a str, location: u16, var_env: &HashMap<String, u16>, line_nr: usize) -> Result<(Token, Option<&'a str>), AssemblerError> {
+fn parse_token<'a, 'b>(arg: &'a str, location: u16, var_env: &HashMap<String, Option<u16>>, line_nr: usize) -> Result<(Token, Option<&'a str>), AssemblerError> {
     use Token::*;
     use Operator::*;
 
@@ -585,7 +627,13 @@ fn parse_token<'a, 'b>(arg: &'a str, location: u16, var_env: &HashMap<String, u1
                 );
                 let var_name = var[..5.min(var.len())].to_string();
                 let value = match var_env.get(&var_name) {
-                    Some(value) => *value,
+                    Some(Some(value)) => *value,
+                    Some(None) => {
+                        return Err(AssemblerError {
+                            line_nr,
+                            message: format!("Circular variable usage")
+                        })
+                    }
                     None => return Err(AssemblerError {
                         line_nr,
                         message: format!("Unknown variable: {}", var_name),
@@ -609,7 +657,7 @@ fn parse_token<'a, 'b>(arg: &'a str, location: u16, var_env: &HashMap<String, u1
     }
 }
 
-fn tokenize(arg: &str, location: u16, var_env: &HashMap<String, u16>, line_nr: usize) -> Result<Vec<Token>, AssemblerError> {
+fn tokenize(arg: &str, location: u16, var_env: &HashMap<String, Option<u16>>, line_nr: usize) -> Result<Vec<Token>, AssemblerError> {
     let mut arg = arg.trim();
     let mut tokens = Vec::new();
     loop {
@@ -624,7 +672,7 @@ fn tokenize(arg: &str, location: u16, var_env: &HashMap<String, u16>, line_nr: u
     Ok(tokens)
 }
 
-fn eval(tokens: Vec<Token>, precedence: u8, var_env: &HashMap<String, u16>, line_nr: usize) -> Result<u16, AssemblerError> {
+fn eval(tokens: Vec<Token>, precedence: u8, var_env: &HashMap<String, Option<u16>>, line_nr: usize) -> Result<u16, AssemblerError> {
     let mut stack: Vec<Token> = Vec::new();
     let mut tokens = tokens;
 
@@ -714,7 +762,7 @@ fn eval(tokens: Vec<Token>, precedence: u8, var_env: &HashMap<String, u16>, line
 }
 
 /// Evaluates operand
-fn eval_arg(arg: &str, location: u16, var_env: &HashMap<String, u16>, line_nr: usize) -> Result<u16, AssemblerError> {
+fn eval_arg(arg: &str, location: u16, var_env: &HashMap<String, Option<u16>>, line_nr: usize) -> Result<u16, AssemblerError> {
     let tokens = tokenize(arg, location, var_env, line_nr)?;
     eval(tokens, Operator::MAX_PRECEDENCE, var_env, line_nr)
 }
@@ -762,7 +810,7 @@ pub fn measure_opcode(opcode: &str) -> u16 {
     }
 }
 
-fn parse_register(reg: &str, location: u16, var_env: &HashMap<String, u16>, line_nr: usize) -> Result<Register, AssemblerError> {
+fn parse_register(reg: &str, location: u16, var_env: &HashMap<String, Option<u16>>, line_nr: usize) -> Result<Register, AssemblerError> {
     match eval_arg(reg, location, var_env, line_nr)? {
         0 => Ok(Register::B),
         1 => Ok(Register::C),
@@ -792,7 +840,7 @@ fn parse_reg_pair_or_sp(arg: &str, line_nr: usize) -> Result<Register, Assembler
     }
 }
 
-fn parse_inst(op: &str, location: u16, args: Vec<String>, var_env: &HashMap<String, u16>, line_nr: usize) -> Result<Vec<u8>, AssemblerError> {
+fn parse_inst(op: &str, location: u16, args: Vec<String>, var_env: &HashMap<String, Option<u16>>, line_nr: usize) -> Result<Vec<u8>, AssemblerError> {
     use Opcode::*;
 
     let assert_arg_cnt = |cnt: usize| {

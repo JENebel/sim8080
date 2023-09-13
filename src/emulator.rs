@@ -114,6 +114,7 @@ impl Emulator {
     pub fn run(&mut self) {
         while (self.pc as usize) <= self.memory.len() {
             let instruction = Opcode::from(self.fetch_byte());
+            
             if instruction == Opcode::HLT {
                 break;
             }
@@ -128,12 +129,6 @@ impl Emulator {
         self.pc = self.pc.wrapping_add(1);
         value
     }
-
-    /*fn fetch_word(&mut self) -> u16 {
-        let low = self.fetch_byte();
-        let high = self.fetch_byte();
-        ((high as u16) << 8) | (low as u16)
-    }*/
 
     /// Sets the register/memory location to the given value
     /// 

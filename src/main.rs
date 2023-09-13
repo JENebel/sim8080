@@ -138,18 +138,18 @@ fn load_hex(filename: &Path, print: bool) -> Result<Vec<(u16, Vec<u8>)>, ()> {
 
 fn write_com(filename: &Path, program: &Vec<(u16, Vec<u8>)>) {
     let mut file = File::create(filename).expect("Failed to create file");
-    let mut loc = 0;
+    let mut max = 0;
+    let mut prog = [0; 0x10000];
+
     for (addr, bytes) in program {
-        if *addr > loc {
-            file.write_all(&vec![0; (addr - loc) as usize]).expect("Failed to write to file");
-            loc = *addr;
-        }
+        max = max.max(addr + bytes.len() as u16);
         
-        for byte in bytes {
-            file.write_all(&[*byte]).expect("Failed to write to file");
-            loc += bytes.len() as u16;
+        for i in 0..bytes.len() {
+            prog[(*addr + i as u16) as usize] = bytes[i];
         }
     }
+
+    file.write_all(&prog[..max as usize]).expect("Failed to write to file");
 }
 
 fn load_com(filename: &Path, print: bool) -> Result<Vec<(u16, Vec<u8>)>, ()> {

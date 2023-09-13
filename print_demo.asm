@@ -1,8 +1,9 @@
+LEN     SET     AFTER - STR
         MVI     C, STR
         MVI     D, AFTER
 
 PRNT:   LDAX    B
-        OUT     0
+        OUT     A
         INR     C
         MOV     A,C
         CMP     D
